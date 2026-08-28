@@ -8,6 +8,7 @@
 
 class UInputMappingContext;
 class UUserWidget;
+class UBinaryDawnInGameMenu;
 
 /**
  *  Simple first person Player Controller
@@ -46,6 +47,10 @@ protected:
 	UPROPERTY(EditAnywhere, Config, Category = "Input|Touch Controls")
 	bool bForceTouchControls = false;
 
+	UPROPERTY(Transient)
+	TObjectPtr<UBinaryDawnInGameMenu> InGameMenuWidget;
+	bool bInGameMenuOpen = false;
+
 	/** Gameplay initialization */
 	virtual void BeginPlay() override;
 
@@ -54,4 +59,6 @@ protected:
 
 	/** Returns true if the player should use UMG touch controls */
 	bool ShouldUseTouchControls() const;
+	void ToggleInGameMenu();
+	void CloseInGameMenu();
 };

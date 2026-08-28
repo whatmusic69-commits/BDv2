@@ -9,6 +9,7 @@
 class UInputMappingContext;
 class AShooterCharacter;
 class UShooterBulletCounterUI;
+class UBinaryDawnInGameMenu;
 
 /**
  *  Simple PlayerController for a first person shooter game
@@ -58,6 +59,12 @@ protected:
 	UPROPERTY()
 	TObjectPtr<UShooterBulletCounterUI> BulletCounterUI;
 
+	/** In-game pause/journal menu. */
+	UPROPERTY(Transient)
+	TObjectPtr<UBinaryDawnInGameMenu> InGameMenuWidget;
+
+	bool bInGameMenuOpen = false;
+
 	/** Team ID for this player */
 	uint8 TeamByte = 0;
 
@@ -82,7 +89,7 @@ protected:
 
 	/** Called when the bullet count on the possessed pawn is updated */
 	UFUNCTION()
-	void OnBulletCountUpdated(int32 MagazineSize, int32 Bullets);
+	void OnBulletCountUpdated(int32 MagazineSize, int32 Bullets, int32 ReserveBullets);
 
 	/** Called when the possessed pawn is damaged */
 	UFUNCTION()
@@ -95,4 +102,12 @@ public:
 
 	/** Assigns a team ID to this player */
 	void SetTeam(uint8 Team);
+
+	/** Toggles the Binary Dawn in-game menu. Bound to P. */
+	void ToggleInGameMenu();
+	/** Closes the in-game menu and restores gameplay input. */
+	void CloseInGameMenu();
+	bool IsInGameMenuOpen() const { return bInGameMenuOpen; }
+	bool SaveBinaryDawnGame(const FString& SlotName = TEXT("QuickSave"));
+	bool LoadBinaryDawnGame(const FString& SlotName = TEXT("QuickSave"));
 };

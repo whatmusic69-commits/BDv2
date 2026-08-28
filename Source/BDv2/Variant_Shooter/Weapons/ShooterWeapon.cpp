@@ -11,6 +11,8 @@
 #include "Animation/AnimInstance.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/Pawn.h"
+#include "Kismet/GameplayStatics.h"
+#include "Components/PointLightComponent.h"
 
 AShooterWeapon::AShooterWeapon()
 {
@@ -26,6 +28,15 @@ AShooterWeapon::AShooterWeapon()
 	FirstPersonMesh->SetCollisionProfileName(FName("NoCollision"));
 	FirstPersonMesh->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::FirstPerson);
 	FirstPersonMesh->bOnlyOwnerSee = true;
+	// First-person arms/weapons must not cast a second world shadow offset from
+	// the third-person character shadow.
+	FirstPersonMesh->SetCastShadow(false);
+	MuzzleFlashLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("Muzzle Flash Light"));
+	MuzzleFlashLight->SetupAttachment(FirstPersonMesh);
+	MuzzleFlashLight->SetVisibility(false);
+	MuzzleFlashLight->SetLightColor(FLinearColor(1.0f, 0.32f, 0.06f));
+	MuzzleFlashLight->SetIntensity(5000.0f);
+	MuzzleFlashLight->SetAttenuationRadius(350.0f);
 
 	// create the third person mesh
 	ThirdPersonMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("Third Person Mesh"));
@@ -39,13 +50,26 @@ AShooterWeapon::AShooterWeapon()
 void AShooterWeapon::BeginPlay()
 {
 	Super::BeginPlay();
+	HipRelativeLocation = GetRootComponent()->GetRelativeLocation();
+	HipRelativeRotation = GetRootComponent()->GetRelativeRotation();
+	AimRelativeLocation = HipRelativeLocation + FVector(-8.0f, 0.0f, -3.0f);
 
 	// subscribe to the owner's destroyed delegate
+	if (!GetOwner())
+	{
+		return;
+	}
+
 	GetOwner()->OnDestroyed.AddDynamic(this, &AShooterWeapon::OnOwnerDestroyed);
 
 	// cast the weapon owner
 	WeaponOwner = Cast<IShooterWeaponHolder>(GetOwner());
 	PawnOwner = Cast<APawn>(GetOwner());
+	if (!WeaponOwner || !PawnOwner)
+	{
+		UE_LOG(LogTemp, Error, TEXT("ShooterWeapon %s requires a pawn owner implementing ShooterWeaponHolder"), *GetName());
+		return;
+	}
 
 	// fill the first ammo clip
 	CurrentBullets = MagazineSize;
@@ -54,12 +78,34 @@ void AShooterWeapon::BeginPlay()
 	WeaponOwner->AttachWeaponMeshes(this);
 }
 
+void AShooterWeapon::SetAiming(bool bAiming)
+{
+	bIsAiming = bAiming;
+	if (GetRootComponent())
+	{
+		GetRootComponent()->SetRelativeLocation(bAiming ? AimRelativeLocation : HipRelativeLocation);
+	}
+}
+
+void AShooterWeapon::SetSprinting(bool bSprinting)
+{
+	if (bIsAiming) return;
+	const FVector SprintOffset = bSprinting ? FVector(-2.0f, 0.0f, 5.0f) : FVector::ZeroVector;
+	const FRotator SprintRotation = bSprinting ? FRotator(-8.0f, 2.0f, 0.0f) : HipRelativeRotation;
+	if (GetRootComponent())
+	{
+		GetRootComponent()->SetRelativeLocation(HipRelativeLocation + SprintOffset);
+		GetRootComponent()->SetRelativeRotation(SprintRotation);
+	}
+}
+
 void AShooterWeapon::EndPlay(EEndPlayReason::Type EndPlayReason)
 {
 	Super::EndPlay(EndPlayReason);
 
 	// clear the refire timer
 	GetWorld()->GetTimerManager().ClearTimer(RefireTimer);
+	GetWorld()->GetTimerManager().ClearTimer(ReloadTimer);
 }
 
 void AShooterWeapon::OnOwnerDestroyed(AActor* DestroyedActor)
@@ -94,6 +140,21 @@ void AShooterWeapon::DeactivateWeapon()
 
 void AShooterWeapon::StartFiring()
 {
+	if (bIsReloading)
+	{
+		return;
+	}
+
+	if (CurrentBullets <= 0)
+	{
+		if (ReserveBullets <= 0)
+		{
+			WeaponOwner->OnWeaponDepleted();
+			return;
+		}
+		Reload();
+		return;
+	}
 	// raise the firing flag
 	bIsFiring = true;
 
@@ -111,9 +172,50 @@ void AShooterWeapon::StartFiring()
 		// if we're full auto, schedule the next shot
 		if (bFullAuto)
 		{
-			GetWorld()->GetTimerManager().SetTimer(RefireTimer, this, &AShooterWeapon::Fire, TimeSinceLastShot, false);
+			const float RemainingCooldown = FMath::Max(KINDA_SMALL_NUMBER, RefireRate - TimeSinceLastShot);
+			GetWorld()->GetTimerManager().SetTimer(RefireTimer, this, &AShooterWeapon::Fire, RemainingCooldown, false);
 		}
 
+	}
+}
+
+void AShooterWeapon::Reload()
+{
+	if (bIsReloading || CurrentBullets >= MagazineSize || ReserveBullets <= 0)
+	{
+		return;
+	}
+
+	StopFiring();
+	bIsReloading = true;
+	OnReloadStarted();
+	if (WeaponOwner)
+	{
+		WeaponOwner->PlayReloadAnimation();
+	}
+	if (WeaponOwner && ReloadMontage)
+	{
+		WeaponOwner->PlayFiringMontage(ReloadMontage);
+	}
+	GetWorld()->GetTimerManager().SetTimer(ReloadTimer, this, &AShooterWeapon::FinishReload, ReloadTime, false);
+}
+
+void AShooterWeapon::FinishReload()
+{
+	const int32 RequestedBullets = MagazineSize - CurrentBullets;
+	const int32 LoadedBullets = FMath::Min(RequestedBullets, ReserveBullets);
+	CurrentBullets += LoadedBullets;
+	ReserveBullets -= LoadedBullets;
+	bIsReloading = false;
+	OnReloadFinished();
+	UpdateAmmoHUD();
+}
+
+void AShooterWeapon::UpdateAmmoHUD()
+{
+	if (WeaponOwner)
+	{
+		WeaponOwner->UpdateWeaponHUD(CurrentBullets, MagazineSize, ReserveBullets);
 	}
 }
 
@@ -129,8 +231,14 @@ void AShooterWeapon::StopFiring()
 void AShooterWeapon::Fire()
 {
 	// ensure the player still wants to fire. They may have let go of the trigger
-	if (!bIsFiring)
+	if (!bIsFiring || bIsReloading)
 	{
+		return;
+	}
+
+	if (CurrentBullets <= 0)
+	{
+		Reload();
 		return;
 	}
 	
@@ -182,29 +290,61 @@ void AShooterWeapon::FireProjectile(const FVector& TargetLocation)
 		Projectile->SetNoiseTag(NoiseOwnerTag);
 	}
 
-	// play the firing montage
-	WeaponOwner->PlayFiringMontage(FiringMontage);
-
-	// add recoil
-	WeaponOwner->AddWeaponRecoil(FiringRecoil);
+	PlayFireEffects();
+	SpawnEjectedCasing();
 
 	// consume bullets
 	--CurrentBullets;
+	if (CurrentBullets <= 0 && ReserveBullets <= 0)
+	{
+		WeaponOwner->UpdateWeaponHUD(0, MagazineSize, 0);
+		WeaponOwner->OnWeaponDepleted();
+		return;
+	}
 
-	// if the clip is depleted, reload it
+	// if the magazine is depleted, begin an actual timed reload
 	if (CurrentBullets <= 0)
 	{
-		CurrentBullets = MagazineSize;
+		Reload();
 	}
 
 	// update the weapon HUD
-	WeaponOwner->UpdateWeaponHUD(CurrentBullets, MagazineSize);
+	WeaponOwner->UpdateWeaponHUD(CurrentBullets, MagazineSize, ReserveBullets);
+}
+
+void AShooterWeapon::PlayFireEffects()
+{
+	if (MuzzleFlashLight)
+	{
+		const FVector MuzzleLoc = FirstPersonMesh->DoesSocketExist(MuzzleSocketName)
+			? FirstPersonMesh->GetSocketLocation(MuzzleSocketName)
+			: FirstPersonMesh->GetComponentLocation() + FirstPersonMesh->GetForwardVector() * 45.0f;
+		MuzzleFlashLight->SetWorldLocation(MuzzleLoc);
+		MuzzleFlashLight->SetVisibility(true);
+		GetWorld()->GetTimerManager().ClearTimer(MuzzleFlashTimer);
+		GetWorld()->GetTimerManager().SetTimer(MuzzleFlashTimer, [this]()
+		{
+			if (MuzzleFlashLight) MuzzleFlashLight->SetVisibility(false);
+		}, 0.055f, false);
+	}
+	if (WeaponOwner)
+	{
+		WeaponOwner->PlayFiringMontage(FiringMontage);
+		WeaponOwner->AddWeaponRecoil(FiringRecoil);
+	}
+
+	if (FiringSound)
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, FiringSound, FirstPersonMesh->GetSocketLocation(MuzzleSocketName));
+	}
 }
 
 FTransform AShooterWeapon::CalculateProjectileSpawnTransform(const FVector& TargetLocation) const
 {
 	// find the muzzle location
-	const FVector MuzzleLoc = FirstPersonMesh->GetSocketLocation(MuzzleSocketName);
+	const FVector MuzzleLoc = FirstPersonMesh->DoesSocketExist(MuzzleSocketName)
+		? FirstPersonMesh->GetSocketLocation(MuzzleSocketName)
+		: FirstPersonMesh->GetComponentLocation() + FirstPersonMesh->GetForwardVector() * 45.0f;
 
 	// calculate the spawn location ahead of the muzzle
 	const FVector SpawnLoc = MuzzleLoc + ((TargetLocation - MuzzleLoc).GetSafeNormal() * MuzzleOffset);

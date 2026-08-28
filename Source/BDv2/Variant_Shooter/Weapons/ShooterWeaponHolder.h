@@ -31,12 +31,14 @@ public:
 
 	/** Plays the firing montage for the weapon */
 	virtual void PlayFiringMontage(UAnimMontage* Montage) = 0;
+	/** Plays the first-person reload sequence when a reload begins. */
+	virtual void PlayReloadAnimation() = 0;
 
 	/** Applies weapon recoil to the owner */
 	virtual void AddWeaponRecoil(float Recoil) = 0;
 
 	/** Updates the weapon's HUD with the current ammo count */
-	virtual void UpdateWeaponHUD(int32 CurrentAmmo, int32 MagazineSize) = 0;
+	virtual void UpdateWeaponHUD(int32 CurrentAmmo, int32 MagazineSize, int32 ReserveAmmo) = 0;
 
 	/** Calculates and returns the aim location for the weapon */
 	virtual FVector GetWeaponTargetLocation() = 0;
@@ -52,4 +54,5 @@ public:
 
 	/** Notifies the owner that the weapon cooldown has expired and it's ready to shoot again */
 	virtual void OnSemiWeaponRefire() = 0;
+	virtual void OnWeaponDepleted() = 0;
 };

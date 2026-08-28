@@ -13,6 +13,8 @@ class AShooterProjectile;
 class USkeletalMeshComponent;
 class UAnimMontage;
 class UAnimInstance;
+class USoundBase;
+class UPointLightComponent;
 
 /**
  *  Base class for a simple first person shooter weapon
@@ -47,11 +49,31 @@ protected:
 	int32 MagazineSize = 10;
 
 	/** Number of bullets in the current magazine */
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Ammo")
 	int32 CurrentBullets = 0;
+
+	/** Ammunition not currently loaded into the magazine. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Ammo", meta = (ClampMin = 0, ClampMax = 1000))
+	int32 ReserveBullets = 90;
+
+	/** Time required to reload the weapon. */
+	UPROPERTY(EditAnywhere, Category="Ammo", meta = (ClampMin = 0.05, ClampMax = 10, Units = "s"))
+	float ReloadTime = 2.2f;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Ammo")
+	bool bIsReloading = false;
 	
 	/** Animation montage to play when firing this weapon */
 	UPROPERTY(EditAnywhere, Category="Animation")
 	UAnimMontage* FiringMontage;
+
+	/** Optional montage played while reloading. */
+	UPROPERTY(EditAnywhere, Category="Animation")
+	UAnimMontage* ReloadMontage;
+
+	/** Optional sound played for every shot. */
+	UPROPERTY(EditAnywhere, Category="Effects")
+	USoundBase* FiringSound;
 
 	/** AnimInstance class to set for the first person character mesh when this weapon is active */
 	UPROPERTY(EditAnywhere, Category="Animation")
@@ -90,9 +112,19 @@ protected:
 
 	/** If true, the weapon is currently firing */
 	bool bIsFiring = false;
+	bool bIsAiming = false;
+	FVector HipRelativeLocation = FVector::ZeroVector;
+	FVector AimRelativeLocation = FVector::ZeroVector;
+	FRotator HipRelativeRotation = FRotator::ZeroRotator;
 
 	/** Timer to handle full auto refiring */
 	FTimerHandle RefireTimer;
+
+	FTimerHandle ReloadTimer;
+	FTimerHandle MuzzleFlashTimer;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Effects", meta=(AllowPrivateAccess="true"))
+	UPointLightComponent* MuzzleFlashLight;
 
 	/** Cast pawn pointer to the owner for AI perception system interactions */
 	TObjectPtr<APawn> PawnOwner;
@@ -135,6 +167,8 @@ public:
 
 	/** Deactivates this weapon */
 	void DeactivateWeapon();
+	void SetAiming(bool bAiming);
+	void SetSprinting(bool bSprinting);
 
 	/** Start firing this weapon */
 	void StartFiring();
@@ -142,10 +176,23 @@ public:
 	/** Stop firing this weapon */
 	void StopFiring();
 
+	/** Starts a timed magazine reload. */
+	void Reload();
+
 protected:
 
 	/** Fire the weapon */
 	virtual void Fire();
+	virtual void SpawnEjectedCasing() {}
+
+	void FinishReload();
+	/** Hooks for weapon-specific reload visuals. */
+	virtual void OnReloadStarted() {}
+	virtual void OnReloadFinished() {}
+
+	void UpdateAmmoHUD();
+
+	void PlayFireEffects();
 
 	/** Called when the refire rate time has passed while shooting semi auto weapons */
 	void FireCooldownExpired();
@@ -177,4 +224,10 @@ public:
 
 	/** Returns the current bullet count */
 	int32 GetBulletCount() const { return CurrentBullets; }
+
+	UFUNCTION(BlueprintPure, Category="Weapon")
+	int32 GetReserveBulletCount() const { return ReserveBullets; }
+
+	UFUNCTION(BlueprintPure, Category="Weapon")
+	bool IsReloading() const { return bIsReloading; }
 };

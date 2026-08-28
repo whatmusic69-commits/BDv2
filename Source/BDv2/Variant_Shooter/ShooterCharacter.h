@@ -8,11 +8,16 @@
 #include "ShooterCharacter.generated.h"
 
 class AShooterWeapon;
+class AShooterDroppedWeapon;
+class USkeletalMeshComponent;
 class UInputAction;
 class UInputComponent;
 class UPawnNoiseEmitterComponent;
+class UAnimInstance;
+class UAnimSequenceBase;
+class UAnimMontage;
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FBulletCountUpdatedDelegate, int32, MagazineSize, int32, Bullets);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FBulletCountUpdatedDelegate, int32, MagazineSize, int32, Bullets, int32, ReserveBullets);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FDamagedDelegate, float, LifePercent);
 
 /**
@@ -39,6 +44,10 @@ protected:
 	UPROPERTY(EditAnywhere, Category ="Input")
 	UInputAction* SwitchWeaponAction;
 
+	/** Reload current weapon input action */
+	UPROPERTY(EditAnywhere, Category ="Input")
+	UInputAction* ReloadAction;
+
 	/** Name of the first person mesh weapon socket */
 	UPROPERTY(EditAnywhere, Category ="Weapons")
 	FName FirstPersonWeaponSocket = FName("HandGrip_R");
@@ -50,6 +59,40 @@ protected:
 	/** Max distance to use for aim traces */
 	UPROPERTY(EditAnywhere, Category ="Aim", meta = (ClampMin = 0, ClampMax = 100000, Units = "cm"))
 	float MaxAimDistance = 10000.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Aim", meta = (ClampMin = 20, ClampMax = 120))
+	float AimFieldOfView = 65.0f;
+
+	float HipFieldOfView = 90.0f;
+	bool bIsAimingDownSights = false;
+	bool bIsSprinting = false;
+	bool bSprintExhausted = false;
+	float Stamina = 3.0f;
+	float CameraBobTime = 0.0f;
+	FVector CameraBaseRelativeLocation = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, Category="Movement")
+	float WalkSpeed = 250.0f;
+	UPROPERTY(EditAnywhere, Category="Movement")
+	float RunSpeed = 420.0f;
+	UPROPERTY(EditAnywhere, Category="Movement")
+	float SprintSpeed = 600.0f;
+	UPROPERTY(EditAnywhere, Category="Movement")
+	float MaxStamina = 3.0f;
+	UPROPERTY(EditAnywhere, Category="Movement")
+	float StaminaDrainRate = 1.0f;
+	UPROPERTY(EditAnywhere, Category="Movement")
+	float StaminaRecoveryRate = 0.75f;
+	UPROPERTY(EditAnywhere, Category="Movement")
+	float ExhaustedRecoveryThreshold = 1.0f;
+
+	UPROPERTY(EditAnywhere, Category="Input")
+	UInputAction* SprintAction;
+	TSubclassOf<UAnimInstance> DefaultFirstPersonAnimClass;
+	TObjectPtr<UAnimSequenceBase> ReloadAnimation;
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimMontage> RuntimeReloadMontage;
+	FTimerHandle ReloadRestoreTimer;
 
 	/** Max HP this character can have */
 	UPROPERTY(EditAnywhere, Category="Health")
@@ -73,8 +116,13 @@ protected:
 	/** List of weapons picked up by the character */
 	TArray<AShooterWeapon*> OwnedWeapons;
 
+	/** Weapon granted automatically when the character enters play. */
+	UPROPERTY(EditAnywhere, Category = "Weapons")
+	TSubclassOf<AShooterWeapon> DefaultWeaponClass;
+
 	/** Weapon currently equipped and ready to shoot with */
 	TObjectPtr<AShooterWeapon> CurrentWeapon;
+	TWeakObjectPtr<AShooterDroppedWeapon> NearbyDroppedWeapon;
 
 	UPROPERTY(EditAnywhere, Category ="Destruction", meta = (ClampMin = 0, ClampMax = 10, Units = "s"))
 	float RespawnTime = 5.0f;
@@ -104,6 +152,7 @@ protected:
 
 	/** Set up input action bindings */
 	virtual void SetupPlayerInputComponent(UInputComponent* InputComponent) override;
+	virtual void Tick(float DeltaSeconds) override;
 
 public:
 
@@ -136,6 +185,25 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Input")
 	void DoSwitchWeapon();
 
+	/** Handles reload input */
+	UFUNCTION(BlueprintCallable, Category="Input")
+	void DoReload();
+	void DropCurrentWeapon();
+	void PickUpNearbyWeapon();
+	void SetNearbyDroppedWeapon(AShooterDroppedWeapon* DroppedWeapon);
+	void PickUpDroppedWeapon(AShooterDroppedWeapon* DroppedWeapon);
+	void RestoreFirstPersonAnimation();
+
+	void StartAimingDownSights();
+	void StopAimingDownSights();
+	void StartSprint();
+	void StopSprint();
+	public:
+	float GetStaminaPercent() const { return MaxStamina > 0.0f ? Stamina / MaxStamina : 0.0f; }
+
+	/** Sends the currently equipped weapon ammo to newly-created HUD widgets. */
+	void RefreshWeaponHUD();
+
 public:
 
 	//~Begin IShooterWeaponHolder interface
@@ -145,12 +213,13 @@ public:
 
 	/** Plays the firing montage for the weapon */
 	virtual void PlayFiringMontage(UAnimMontage* Montage) override;
+	virtual void PlayReloadAnimation() override;
 
 	/** Applies weapon recoil to the owner */
 	virtual void AddWeaponRecoil(float Recoil) override;
 
 	/** Updates the weapon's HUD with the current ammo count */
-	virtual void UpdateWeaponHUD(int32 CurrentAmmo, int32 MagazineSize) override;
+	virtual void UpdateWeaponHUD(int32 CurrentAmmo, int32 MagazineSize, int32 ReserveAmmo) override;
 
 	/** Calculates and returns the aim location for the weapon */
 	virtual FVector GetWeaponTargetLocation() override;
@@ -166,6 +235,7 @@ public:
 
 	/** Notifies the owner that the weapon cooldown has expired and it's ready to shoot again */
 	virtual void OnSemiWeaponRefire() override;
+	virtual void OnWeaponDepleted() override;
 
 	//~End IShooterWeaponHolder interface
 

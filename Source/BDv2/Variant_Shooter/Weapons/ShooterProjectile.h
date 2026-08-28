@@ -111,4 +111,10 @@ public:
 	/** Sets the noise tag to use when generating AI perception noise on impact */
 	void SetNoiseTag(const FName& Tag);
 
+	/** Returns the movement component so concrete projectile types can configure ballistics. */
+	UProjectileMovementComponent* GetProjectileMovementComponent() const { return ProjectileMovement; }
+
+	/** Returns the collision component so concrete projectile types can configure projectile size. */
+	USphereComponent* GetCollisionComponent() const { return CollisionComponent; }
+
 };
